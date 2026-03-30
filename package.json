@@ -1,0 +1,34 @@
+# ===== SERVER =====
+PORT=3001
+NODE_ENV=development
+FRONTEND_URL=http://localhost:3000
+
+# ===== WHATSAPP BUSINESS API (Meta Cloud API) =====
+# Get from: https://developers.facebook.com/apps/
+WA_PHONE_NUMBER_ID=your_phone_number_id
+WA_ACCESS_TOKEN=your_permanent_access_token
+WA_VERIFY_TOKEN=your_custom_webhook_verify_token   # any random string you choose
+WA_BUSINESS_ACCOUNT_ID=your_whatsapp_business_account_id
+
+# ===== GOOGLE BUSINESS PROFILE API =====
+# Get from: https://console.cloud.google.com/
+GOOGLE_CLIENT_ID=your_google_oauth_client_id
+GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
+GOOGLE_REDIRECT_URI=http://localhost:3001/auth/google/callback
+GOOGLE_REFRESH_TOKEN=your_google_refresh_token
+GOOGLE_LOCATION_NAME=accounts/YOUR_ACCOUNT_ID/locations/YOUR_LOCATION_ID
+GOOGLE_REVIEW_LINK=https://g.page/r/YOUR_PLACE_ID/review
+
+# ===== EMAIL (Nodemailer) =====
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your@gmail.com
+SMTP_PASS=your_app_password
+ADMIN_EMAIL=admin@yourbusiness.ge
+ADMIN_WHATSAPP=+995598888817
+
+# ===== BUSINESS CONFIG =====
+BUSINESS_NAME=ჩემი ბიზნესი
+SURVEY_QUESTION=გამარჯობა! 👋 როგორ შეაფასებდით ჩვენს მომსახურებას? გთხოვთ, გამოუგზავნოთ შეფასება 1-5 შკალაზე.
+NEGATIVE_THRESHOLD=3   # ratings <= this are treated as negative
+SURVEY_DELAY_HOURS=2   # hours after service before sending survey

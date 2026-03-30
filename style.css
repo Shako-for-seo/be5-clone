@@ -1,0 +1,137 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
+const cron = require('node-cron');
+const path = require('path');
+
+// Auto-setup DB if not exists
+const dbPath = path.join(__dirname, 'database', 'be5.db');
+const fs = require('fs');
+if (!fs.existsSync(dbPath)) {
+  console.log('🔧 Setting up database for first time...');
+  require('./database/setup');
+}
+
+const { getDb } = require('./database/db');
+const { fetchReviews, autoReplyAll, monitorNegativeReviews } = require('./services/googleReviews');
+const { notifyNegativeSurvey } = require('./services/notifications');
+const { sendMessage } = require('./services/whatsapp');
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+// ===== MIDDLEWARE =====
+app.use(cors({
+  origin: process.env.FRONTEND_URL || '*',
+  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  credentials: true,
+}));
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(morgan('dev'));
+
+// Rate limiting
+const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200 });
+const strictLimiter = rateLimit({ windowMs: 60 * 1000, max: 10 });
+app.use('/api/', limiter);
+app.use('/api/leads', strictLimiter); // stricter for lead form
+
+// ===== ROUTES =====
+app.use('/webhook', require('./routes/webhook'));
+app.use('/api/leads', require('./routes/leads'));
+app.use('/api/surveys', require('./routes/surveys'));
+app.use('/api/reviews', require('./routes/reviews'));
+app.use('/api/dashboard', require('./routes/dashboard'));
+app.use('/api/whatsapp', require('./routes/whatsapp'));
+
+// GET /api/settings
+app.get('/api/settings', (req, res) => {
+  const db = getDb();
+  const rows = db.prepare('SELECT key, value FROM settings').all();
+  const settings = {};
+  rows.forEach(r => { settings[r.key] = r.value; });
+  res.json(settings);
+});
+
+// POST /api/settings
+app.post('/api/settings', (req, res) => {
+  const db = getDb();
+  const upsert = db.prepare(`
+    INSERT INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+  `);
+  const upsertMany = db.transaction((data) => {
+    for (const [k, v] of Object.entries(data)) {
+      upsert.run(k, String(v), String(v));
+    }
+  });
+  upsertMany(req.body);
+  res.json({ success: true });
+});
+
+// Health check
+app.get('/health', (req, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
+
+// ===== SCHEDULED JOBS =====
+
+// Every hour: fetch new Google reviews
+cron.schedule('0 * * * *', async () => {
+  console.log('🔄 [CRON] Fetching Google reviews...');
+  try { await fetchReviews(); } catch (e) { console.error(e.message); }
+});
+
+// Every 2 hours: auto-reply to unanswered reviews
+cron.schedule('0 */2 * * *', async () => {
+  console.log('🤖 [CRON] Auto-replying to Google reviews...');
+  const db = getDb();
+  const businessName = db.prepare('SELECT value FROM settings WHERE key = ?').get('businessName')?.value;
+  try { await autoReplyAll(businessName); } catch (e) { console.error(e.message); }
+});
+
+// Every 30 minutes: check for new negative reviews and notify admin
+cron.schedule('*/30 * * * *', async () => {
+  console.log('🚨 [CRON] Monitoring negative reviews...');
+  try {
+    await monitorNegativeReviews(async (review) => {
+      await notifyNegativeSurvey({
+        phone: 'Google Review',
+        customerName: review.author_name,
+        rating: review.rating,
+        response: review.comment,
+      });
+      // Also WhatsApp admin
+      if (process.env.ADMIN_WHATSAPP) {
+        const stars = '⭐'.repeat(review.rating) + '☆'.repeat(5 - review.rating);
+        await sendMessage(
+          process.env.ADMIN_WHATSAPP,
+          `🚨 ახალი ნეგატიური Google შეფასება!\n${review.author_name}: ${stars}\n"${review.comment}"`,
+          'notification'
+        );
+      }
+    });
+  } catch (e) { console.error(e.message); }
+});
+
+// ===== ERROR HANDLER =====
+app.use((err, req, res, next) => {
+  console.error('❌ Server error:', err.stack);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// ===== START =====
+app.listen(PORT, () => {
+  console.log(`
+  ╔══════════════════════════════════════╗
+  ║   🌟 Be5 Backend Running!            ║
+  ║   Port:    ${PORT}                      ║
+  ║   Env:     ${process.env.NODE_ENV || 'development'}                ║
+  ║   Webhook: POST /webhook             ║
+  ║   API:     /api/*                    ║
+  ╚══════════════════════════════════════╝
+  `);
+});
+
+module.exports = app;

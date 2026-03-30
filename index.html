@@ -1,0 +1,38 @@
+const express = require('express');
+const router = express.Router();
+const { getDb } = require('../database/db');
+const { sendMessage, broadcast } = require('../services/whatsapp');
+
+// GET /api/whatsapp/messages
+router.get('/messages', (req, res) => {
+  const db = getDb();
+  const msgs = db.prepare('SELECT * FROM wa_messages ORDER BY created_at DESC LIMIT 100').all();
+  res.json(msgs);
+});
+
+// POST /api/whatsapp/send — send a single message
+router.post('/send', async (req, res) => {
+  const { phone, message } = req.body;
+  if (!phone || !message) return res.status(400).json({ error: 'phone and message required' });
+  const result = await sendMessage(phone, message, 'custom');
+  res.json(result);
+});
+
+// POST /api/whatsapp/broadcast — send to all (or filtered) leads
+router.post('/broadcast', async (req, res) => {
+  const { message, target } = req.body;
+  if (!message) return res.status(400).json({ error: 'message required' });
+
+  const db = getDb();
+  let query = 'SELECT phone FROM leads';
+  if (target === 'new') query += " WHERE status = 'new'";
+  else if (target === 'contacted') query += " WHERE status = 'contacted'";
+
+  const phones = db.prepare(query).all().map(r => r.phone);
+  if (!phones.length) return res.json({ success: true, sent: 0 });
+
+  const results = await broadcast(message, phones);
+  res.json({ success: true, sent: results.filter(r => r.success).length, failed: results.filter(r => !r.success).length });
+});
+
+module.exports = router;
